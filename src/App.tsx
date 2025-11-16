@@ -3278,10 +3278,6 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
               <p className="text-[12px] text-neutral-400 mt-1 line-clamp-2">
                 {ad.description}
               </p>
-              {/* Show current appId for debugging */}
-              <p className="text-[10px] text-neutral-500 mt-1">
-                AppID: {ad.appId || 'Not set'} | Status: {ad.enabled ? 'Active' : 'Disabled'}
-              </p>
             </div>
           </div>
 
