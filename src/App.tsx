@@ -2541,25 +2541,19 @@ const DailyTasks: React.FC<DailyTasksProps> = ({
 
 // Enhanced AdsDashboard with proper AdExtra integration and Firebase appId updating
 const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) => {
-  const [ads, setAds] = React.useState<Ad[]>([
-    { id: 1, title: 'Ads1', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'gigapub', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: '4338' },
-    { id: 2, title: 'Ads2', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'onclicka', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: '6098415' },
-    { id: 3, title: 'Ads3', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'adsovio', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: '7721' },
-    { id: 4, title: 'Ads4', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'adextra', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: 'STATIC_FROM_INDEX_HTML' },
-  ]);
-
+  const [ads, setAds] = React.useState<Ad[]>([]);
   const [isWatchingAd, setIsWatchingAd] = React.useState<number | null>(null);
   const [scriptLoaded, setScriptLoaded] = React.useState<Record<Provider, boolean>>({
     gigapub: false,
     onclicka: false,
     adsovio: false,
-    adextra: true, // AdExtra comes from index.html
+    adextra: false,
   });
   const [scriptsInitialized, setScriptsInitialized] = React.useState<Record<Provider, boolean>>({
     gigapub: false,
     onclicka: false,
     adsovio: false,
-    adextra: true,
+    adextra: false,
   });
   const [cooldowns, setCooldowns] = React.useState<Record<string, number>>({});
   const [lastWatched, setLastWatched] = React.useState<Record<string, Date>>({});
@@ -2571,7 +2565,7 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
   const { walletConfig } = useWalletConfig();
 
   // Concurrency lock management
-  const concurrencyLockRef = React.useRef<boolean>(false);
+  const concurrencyLockRef = useRef<boolean>(false);
 
   const showMessage = (type: 'success' | 'error' | 'info', message: string) => {
     setUserMessages({ type, message });
@@ -2725,52 +2719,49 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
     const unsubscribe = onValue(adsRef, (snapshot) => {
       if (!snapshot.exists()) {
         console.log('No ads configuration found in Firebase');
+        setAds([]);
         return;
       }
-
+      
       const adsData: Record<string, any> = snapshot.val();
       console.log('Loaded ads config from Firebase:', adsData);
-
-      setAds((prev) =>
-        prev.map((ad) => {
-          const cfg = adsData[ad.provider];
-          if (!cfg) {
-            console.log(`No config found for provider: ${ad.provider}`);
-            return ad;
-          }
-
-          // FIXED: Properly update all fields including appId
-          const updatedAd = {
-            ...ad,
-            reward: cfg.reward ?? ad.reward,
-            dailyLimit: cfg.dailyLimit ?? ad.dailyLimit,
-            hourlyLimit: cfg.hourlyLimit ?? ad.hourlyLimit,
-            cooldown: cfg.cooldown ?? ad.cooldown,
+      
+      // Create ads array from Firebase data
+      const adsArray: Ad[] = [];
+      
+      // Define the providers in order
+      const providers: Provider[] = ['gigapub', 'onclicka', 'adsovio', 'adextra'];
+      
+      providers.forEach((provider, index) => {
+        const cfg = adsData[provider];
+        if (cfg) {
+          const ad: Ad = {
+            id: index + 1,
+            title: `Ads${index + 1}`,
+            description: `${walletConfig.currency} ${cfg.reward || 0.5} per ad`,
+            watched: 0,
+            dailyLimit: cfg.dailyLimit || 5,
+            hourlyLimit: cfg.hourlyLimit || 2,
+            provider: provider,
+            waitTime: cfg.waitTime || 5,
+            cooldown: cfg.cooldown || 60,
+            reward: cfg.reward || 0.5,
             enabled: cfg.enabled !== false,
-            waitTime: cfg.waitTime ?? ad.waitTime,
-            // FIXED: This line was missing - properly update appId from Firebase
-            appId: cfg.appId ?? ad.appId,
-            description: `${walletConfig.currency} ${cfg.reward ?? ad.reward} per ad`,
+            appId: cfg.appId || '', // Will be set from Firebase
           };
-
-          console.log(`Updated ${ad.provider} ad:`, {
-            oldAppId: ad.appId,
-            newAppId: updatedAd.appId,
-            fromConfig: cfg.appId,
-            enabled: updatedAd.enabled,
-          });
-
-          return updatedAd;
-        })
-      );
-
+          adsArray.push(ad);
+        }
+      });
+      
+      setAds(adsArray);
+      
       // Reset script initialization when config changes
-      setScriptsInitialized((prev) => ({
-        ...prev,
+      setScriptsInitialized({
         gigapub: false,
         onclicka: false,
         adsovio: false,
-      }));
+        adextra: false,
+      });
     });
 
     return () => unsubscribe();
@@ -2778,20 +2769,19 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
 
   // FIXED: Add debug logging to see current appIds
   React.useEffect(() => {
-    console.log(
-      'Current ads configuration:',
-      ads.map((ad) => ({
+    if (ads.length > 0) {
+      console.log('Current ads configuration:', ads.map(ad => ({
         provider: ad.provider,
         appId: ad.appId,
         enabled: ad.enabled,
-        reward: ad.reward,
-      }))
-    );
+        reward: ad.reward
+      })));
+    }
   }, [ads]);
 
   // Load user's ad watch history
   React.useEffect(() => {
-    if (!userData?.telegramId) return;
+    if (!userData?.telegramId || ads.length === 0) return;
     const userAdsRef = ref(db, `userAds/${userData.telegramId}`);
     const unsubscribe = onValue(userAdsRef, (snapshot) => {
       if (!snapshot.exists()) return;
@@ -2810,32 +2800,28 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
           const lastReset = pData?.lastReset;
           if (lastReset && formatDate(new Date(lastReset)) !== today) watchedToday = 0;
 
-          return {
-            ...ad,
-            watched: watchedToday,
-            lastWatched: pData?.lastWatched ? new Date(pData.lastWatched) : undefined,
-          };
+          return { ...ad, watched: watchedToday, lastWatched: pData?.lastWatched ? new Date(pData.lastWatched) : undefined };
         })
       );
       setLastWatched(newLastWatched);
     });
     return () => unsubscribe();
-  }, [userData?.telegramId]);
+  }, [userData?.telegramId, ads]);
 
   // FIXED: Enhanced script initialization to use updated appId
   React.useEffect(() => {
     const initScripts = () => {
       ads.forEach((ad) => {
-        if (!ad.enabled || scriptsInitialized[ad.provider]) return;
-
+        if (!ad.enabled || !ad.appId || scriptsInitialized[ad.provider]) return;
+        
         console.log(`Initializing ${ad.provider} with appId:`, ad.appId);
-
+        
         switch (ad.provider) {
           case 'gigapub': {
             if (!document.getElementById('gigapub-script')) {
               const s = document.createElement('script');
               s.id = 'gigapub-script';
-              // FIXED: Use the updated appId from Firebase
+              // Use the appId from Firebase
               s.src = `https://ad.gigapub.tech/script?id=${ad.appId}`;
               s.async = true;
               s.onload = () => {
@@ -2858,7 +2844,7 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
             if (!document.getElementById('adsovio-script')) {
               const s = document.createElement('script');
               s.id = 'adsovio-script';
-              // FIXED: Use the updated appId from Firebase
+              // Use the appId from Firebase
               s.src = `https://adsovio.com/cdn/ads.js?app_uid=${ad.appId}`;
               s.async = true;
               s.onload = () => {
@@ -2879,26 +2865,23 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
           }
           case 'adextra': {
             // AdExtra is expected to be included in index.html
-            setScriptLoaded((p) => ({
-              ...p,
-              adextra: typeof window.p_adextra === 'function' || p.adextra,
-            }));
+            setScriptLoaded((p) => ({ ...p, adextra: typeof window.p_adextra === 'function' || p.adextra }));
             setScriptsInitialized((p) => ({ ...p, adextra: true }));
             break;
           }
         }
       });
     };
-
+    
     if (ads.length > 0) {
       initScripts();
     }
   }, [ads, scriptsInitialized]);
 
   // Onclicka initialization
-  React.useEffect(() => {
+  useEffect(() => {
     const loadOnclickaScript = () => {
-      const onclickaAd = ads.find((ad) => ad.provider === 'onclicka' && ad.enabled);
+      const onclickaAd = ads.find(ad => ad.provider === 'onclicka' && ad.enabled && ad.appId);
       if (!onclickaAd) return;
 
       if (document.getElementById('onclicka-script')) {
@@ -2910,42 +2893,45 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
       script.id = 'onclicka-script';
       script.src = 'https://js.onclckvd.com/in-stream-ad-admanager/tma.js';
       script.async = true;
-
+      
       script.onload = async () => {
         console.log('Onclicka script loaded successfully');
-
+        
         try {
           if (window.initCdTma) {
-            // FIXED: Use the updated appId from Firebase
-            const onclickaAd = ads.find((ad) => ad.provider === 'onclicka');
-            const appId = onclickaAd?.appId || '6098415';
+            // Use the updated appId from Firebase
+            const onclickaAd = ads.find(ad => ad.provider === 'onclicka');
+            const appId = onclickaAd?.appId;
+            if (!appId) {
+              console.error('No appId found for Onclicka');
+              setScriptLoaded(prev => ({ ...prev, onclicka: false }));
+              return;
+            }
+            
             const show = await window.initCdTma({ id: appId });
             window.showAd = show;
-            setScriptLoaded((prev) => ({
-              ...prev,
-              onclicka: typeof window.showAd === 'function',
-            }));
+            setScriptLoaded(prev => ({ ...prev, onclicka: typeof window.showAd === 'function' }));
             console.log('Onclicka initialized successfully with appId:', appId);
           } else {
             console.error('initCdTma not defined after script load');
-            setScriptLoaded((prev) => ({ ...prev, onclicka: false }));
+            setScriptLoaded(prev => ({ ...prev, onclicka: false }));
           }
         } catch (error) {
           console.error('Onclicka initialization error:', error);
-          setScriptLoaded((prev) => ({ ...prev, onclicka: false }));
+          setScriptLoaded(prev => ({ ...prev, onclicka: false }));
         }
       };
-
+      
       script.onerror = () => {
         console.error('Failed to load Onclicka script');
-        setScriptLoaded((prev) => ({ ...prev, onclicka: false }));
+        setScriptLoaded(prev => ({ ...prev, onclicka: false }));
       };
-
+      
       document.head.appendChild(script);
     };
 
-    // Only load if there's an Onclicka ad enabled
-    const onclickaAd = ads.find((ad) => ad.provider === 'onclicka' && ad.enabled);
+    // Only load if there's an Onclicka ad enabled with appId
+    const onclickaAd = ads.find(ad => ad.provider === 'onclicka' && ad.enabled && ad.appId);
     if (onclickaAd && !scriptLoaded.onclicka) {
       console.log('Loading Onclicka with appId:', onclickaAd.appId);
       loadOnclickaScript();
@@ -3014,7 +3000,7 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
         amount: reward,
         description: `Ad watched: ${ad.title}`,
         timestamp: Date.now(),
-        status: 'completed',
+        status: 'completed'
       });
 
       if (userData.referredBy) {
@@ -3032,12 +3018,10 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
   const handleAdCompletion = async (adId: number) => {
     await updateUserAdWatch(adId);
     const earned = await recordAdWatch(adId);
-    if (earned > 0)
-      showMessage('success', `Ad completed! You earned ${walletConfig.currencySymbol}${earned}`);
+    if (earned > 0) showMessage('success', `Ad completed! You earned ${walletConfig.currencySymbol}${earned}`);
   };
 
-  const formatTime = (sec: number): string =>
-    sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  const formatTime = (sec: number): string => (sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${sec % 60}s`);
 
   // Enhanced AdExtra handler with proper timeout and error handling
   const runAdExtra = async (adId: number, ad: Ad) => {
@@ -3104,7 +3088,7 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
 
     try {
       showMessage('info', 'Loading Onclicka...');
-
+      
       await window.showAd();
       await handleAdCompletion(adId);
       setAds((prev) => prev.map((a) => (a.id === adId ? { ...a, watched: a.watched + 1 } : a)));
@@ -3135,6 +3119,12 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
     }
     if (!ad.enabled) {
       showMessage('error', 'This ad provider is temporarily unavailable');
+      return;
+    }
+    
+    // Check if appId is available
+    if (!ad.appId) {
+      showMessage('error', 'Ad provider configuration is incomplete');
       return;
     }
 
@@ -3182,10 +3172,10 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
       let adCompleted = false;
 
       if (ad.provider === 'gigapub' && window.showGiga) {
-        await window.showGiga();
+        await window.showGiga(); 
         adCompleted = true;
       } else if (ad.provider === 'adsovio' && window.showAdsovio) {
-        await window.showAdsovio();
+        await window.showAdsovio(); 
         adCompleted = true;
       } else {
         throw new Error('Ad provider function not available');
@@ -3216,6 +3206,7 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
 
   const isAdDisabled = (ad: Ad) => {
     if (!ad.enabled) return true;
+    if (!ad.appId) return true; // Disable if no appId
     if (ad.dailyLimit > 0 && ad.watched >= ad.dailyLimit) return true;
     if (cooldowns[ad.provider]) return true;
     if (ad.provider !== 'adextra' && !scriptLoaded[ad.provider]) return true;
@@ -3225,6 +3216,7 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
 
   const getButtonText = (ad: Ad) => {
     if (!ad.enabled) return 'Temporarily Disabled';
+    if (!ad.appId) return 'Not Configured';
     if (ad.dailyLimit > 0 && ad.watched >= ad.dailyLimit) return 'Daily Limit Reached';
     if (cooldowns[ad.provider]) return `Wait ${formatTime(cooldowns[ad.provider])}`;
     if (ad.provider !== 'adextra' && !scriptLoaded[ad.provider]) return 'Loading...';
@@ -3232,6 +3224,17 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
     if (isWatchingAd === ad.id) return 'Watching Ad...';
     return 'Watch Now';
   };
+
+  if (ads.length === 0) {
+    return (
+      <div className="flex justify-center items-center p-8">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-neutral-400" />
+          <p className="text-neutral-400">Loading ads configuration...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-2 gap-2 text-neutral-200">
@@ -3275,9 +3278,9 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
               <p className="text-[12px] text-neutral-400 mt-1 line-clamp-2">
                 {ad.description}
               </p>
-              {/* FIXED: Show current appId for debugging */}
+              {/* Show current appId for debugging */}
               <p className="text-[10px] text-neutral-500 mt-1">
-                AppID: {ad.appId} | Status: {ad.enabled ? 'Active' : 'Disabled'}
+                AppID: {ad.appId || 'Not set'} | Status: {ad.enabled ? 'Active' : 'Disabled'}
               </p>
             </div>
           </div>
@@ -3310,7 +3313,6 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
     </div>
   );
 };
-
 
 // VPN Guard Component
 function normalizeCountryString(s?: string): string {
