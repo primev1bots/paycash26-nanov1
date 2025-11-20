@@ -220,8 +220,9 @@ interface AppConfig {
   miningBaseAmount: number;
   miningMaxAmount: number;
   miningDuration: number;
-  monetagAppId: string; // NEW: Monetag app ID from database
+  monetagAppId: string;
   botUsername: string;
+  libtlZoneId: string; // ADD THIS LINE
 }
 
 interface SliderImage {
@@ -1139,9 +1140,10 @@ function usePaymentMethods() {
 }
 
 // App Configuration Hook with mining values and monetag
+// App Configuration Hook with mining values, monetag, and libtl
 function useAppConfig() {
   const [appConfig, setAppConfig] = useState<AppConfig>({
-     logoUrl: '',
+    logoUrl: '',
     appName: 'NanoV1',
     sliderImages: [],
     supportUrl: 'https://t.me/nan0v1_support',
@@ -1151,7 +1153,8 @@ function useAppConfig() {
     miningMaxAmount: 1.0,
     miningDuration: 60000,
     monetagAppId: '',
-    botUsername: 'use_bot' // ADD THIS LINE
+    botUsername: 'use_bot',
+    libtlZoneId: '' // ADD THIS WITH DEFAULT VALUE
   });
   const [loading, setLoading] = useState(true);
 
@@ -1163,9 +1166,18 @@ function useAppConfig() {
         const configData = snapshot.val();
         setAppConfig({
           // Keep existing defaults as fallback
-          ...appConfig,
-          // Override with database values
-          ...configData
+          logoUrl: configData.logoUrl || '',
+          appName: configData.appName || 'NanoV1',
+          sliderImages: configData.sliderImages || [],
+          supportUrl: configData.supportUrl || 'https://t.me/nan0v1_support',
+          tutorialVideoId: configData.tutorialVideoId || 'dQw4w9WgXcQ',
+          referralCommissionRate: configData.referralCommissionRate || 10,
+          miningBaseAmount: configData.miningBaseAmount || 0.001,
+          miningMaxAmount: configData.miningMaxAmount || 1.0,
+          miningDuration: configData.miningDuration || 60000,
+          monetagAppId: configData.monetagAppId || '',
+          botUsername: configData.botUsername || 'use_bot',
+          libtlZoneId: configData.libtlZoneId || '' // ADD THIS LINE
         });
       }
       setLoading(false);
@@ -1760,13 +1772,13 @@ const TabContainer = () => {
   )
 }
 
-// Home Tab Component with libtl.com integration
+// Home Tab Component with Proper libtl.com Integration
 const HomeTab: React.FC = () => {
   const { userData, updateUser, addTransaction } = useUserData()
   const { referralData } = useReferralData()
   const { walletConfig } = useWalletConfig()
-  const { appConfig } = useAppConfig() // Get app config for mining values
-  useUserActivity() // Track user activity
+  const { appConfig, loading: appConfigLoading } = useAppConfig() // Get loading state
+  useUserActivity()
   const tgUser = (window as any).Telegram?.WebApp?.initDataUnsafe?.user
 
   const {
@@ -1782,90 +1794,157 @@ const HomeTab: React.FC = () => {
   const currentAmount = getCurrentAmount()
   const { parts } = useMiningCountdown(remainingTime)
 
-  // Debug logging to see actual mining values from database
-  useEffect(() => {
-    console.log('Mining Config from Database:', {
-      baseAmount: appConfig.miningBaseAmount,
-      maxAmount: appConfig.miningMaxAmount,
-      duration: appConfig.miningDuration
-    })
-  }, [appConfig])
-
-  // libtl.com rewarded ad setup
+  // libtl.com rewarded ad state
   const [showingAd, setShowingAd] = useState(false)
   const [libtlLoaded, setLibtlLoaded] = useState(false)
+  const [libtlScriptInjected, setLibtlScriptInjected] = useState(false)
 
+  // Effect to load libtl SDK only when appConfig is ready
   useEffect(() => {
-    // Inject the libtl SDK once
+    if (appConfigLoading || libtlScriptInjected) return
+
+    const libtlZoneId = appConfig.libtlZoneId // Get from Firebase config
+    if (!libtlZoneId) {
+      console.warn('libtl Zone ID not configured in Firebase')
+      return
+    }
+
+    // Remove any existing libtl script first
+    const existingScript = document.getElementById('libtl-sdk-script')
+    if (existingScript) {
+      existingScript.remove()
+    }
+
+    // Inject the libtl SDK with proper configuration from Firebase
     const script = document.createElement('script')
+    script.id = 'libtl-sdk-script'
     script.src = '//libtl.com/sdk.js'
     script.async = true
-    script.setAttribute('data-zone', '10209973')
-    script.setAttribute('data-sdk', 'show_10209973')
+    script.setAttribute('data-zone', libtlZoneId)
+    script.setAttribute('data-sdk', `show_${libtlZoneId}`)
     
     script.onload = () => {
-      console.log('libtl SDK loaded successfully')
+      console.log('libtl SDK loaded successfully with zone:', libtlZoneId)
       setLibtlLoaded(true)
+      setLibtlScriptInjected(true)
     }
     
-    script.onerror = () => {
-      console.error('Failed to load libtl SDK')
+    script.onerror = (error) => {
+      console.error('Failed to load libtl SDK:', error)
       setLibtlLoaded(false)
+      setLibtlScriptInjected(true)
     }
     
     document.body.appendChild(script)
-    
-    return () => {
-      // Clean up the script if the component unmounts
-      try {
-        document.body.removeChild(script)
-      } catch {}
-    }
-  }, [])
 
-  // Helper to show the rewarded ad and resolve when it's done/closed
+    return () => {
+      // Cleanup on unmount
+      try {
+        const script = document.getElementById('libtl-sdk-script')
+        if (script) document.body.removeChild(script)
+      } catch (e) {
+        console.warn('Error cleaning up libtl script:', e)
+      }
+    }
+  }, [appConfigLoading, appConfig.libtlZoneId, libtlScriptInjected])
+
+  // Effect to reload libtl SDK when configuration changes
+  useEffect(() => {
+    if (appConfig.libtlZoneId && libtlScriptInjected) {
+      console.log('libtl configuration changed, reloading SDK...')
+      setLibtlScriptInjected(false)
+      setLibtlLoaded(false)
+    }
+  }, [appConfig.libtlZoneId])
+
+  // Enhanced showRewardedAd function with proper error handling
   const showRewardedAd = async (): Promise<boolean> => {
+    const libtlZoneId = appConfig.libtlZoneId
+    if (!libtlZoneId) {
+      console.error('libtl Zone ID not configured')
+      return false
+    }
+
+    const showAdFunction = (window as any)[`show_${libtlZoneId}`]
+    
     return new Promise((resolve) => {
       try {
-        const showAdFunction = (window as any).show_10209973
-        if (typeof showAdFunction === 'function') {
-          // libtl SDK function - we assume it returns a promise or uses callbacks
-          const result = showAdFunction()
-          
-          if (result && typeof result.then === 'function') {
-            // If it returns a promise, wait for it
-            result
-              .then(() => {
-                console.log('libtl ad completed successfully')
-                resolve(true)
-              })
-              .catch(() => {
-                console.log('libtl ad failed or was skipped')
-                resolve(false)
-              })
-          } else {
-            // If no promise returned, assume success after a reasonable timeout
-            console.log('libtl ad started (no promise returned)')
-            setTimeout(() => {
-              resolve(true)
-            }, 30000) // 30 second timeout as fallback
-          }
-        } else {
-          console.warn('libtl show function not available')
-          // If function not available, proceed anyway to not block users
-          resolve(true)
+        if (typeof showAdFunction !== 'function') {
+          console.error('libtl show function not available')
+          resolve(false)
+          return
         }
+
+        // Set a reasonable timeout for the ad
+        const timeoutDuration = 45000 // 45 seconds
+        let timeoutId: NodeJS.Timeout
+        let adCompleted = false
+
+        const cleanup = (success: boolean) => {
+          if (adCompleted) return
+          adCompleted = true
+          clearTimeout(timeoutId)
+          resolve(success)
+        }
+
+        // Set timeout
+        timeoutId = setTimeout(() => {
+          console.warn('libtl ad timeout reached')
+          cleanup(false)
+        }, timeoutDuration)
+
+        // Execute the ad function
+        const result = showAdFunction()
+        
+        if (result && typeof result.then === 'function') {
+          // Promise-based API
+          result
+            .then(() => {
+              console.log('libtl ad completed successfully')
+              cleanup(true)
+            })
+            .catch((error: any) => {
+              console.error('libtl ad failed:', error)
+              cleanup(false)
+            })
+        } else {
+          // Callback-based API or no return value
+          // Assume success after a shorter delay if no callbacks
+          console.log('libtl ad started (assuming success)')
+          // We'll rely on the timeout or ad completion callbacks
+          // Note: libtl might use different callback mechanisms
+        }
+
+        // Additional fallback: check for libtl global callbacks
+        if (window.libtl) {
+          window.libtl.onAdCompleted = () => {
+            console.log('libtl ad completed via global callback')
+            cleanup(true)
+          }
+          
+          window.libtl.onAdFailed = () => {
+            console.log('libtl ad failed via global callback')
+            cleanup(false)
+          }
+        }
+
       } catch (error) {
         console.error('Error showing libtl ad:', error)
-        // Don't block user flow if ad fails
-        resolve(true)
+        resolve(false)
       }
     })
   }
 
-  // Enhanced claim handler with libtl ad gate
+  // Enhanced claim handler with proper libtl integration
   const handleClaim = async () => {
-    if (!userData) return
+    if (!userData) {
+      window?.Telegram?.WebApp?.showPopup?.({
+        title: 'Error',
+        message: 'User data not loaded. Please try again.',
+        buttons: [{ type: 'ok' }],
+      })
+      return
+    }
 
     try {
       // If mining not active → start session
@@ -1883,6 +1962,16 @@ const HomeTab: React.FC = () => {
 
       // If claimable → show rewarded ad first, then claim
       if (canClaim) {
+        // Check if libtl is properly loaded
+        if (!libtlLoaded) {
+          window?.Telegram?.WebApp?.showPopup?.({
+            title: 'Ads Not Ready',
+            message: 'Ad provider is still loading. Please wait a moment and try again.',
+            buttons: [{ type: 'ok' }],
+          })
+          return
+        }
+
         setShowingAd(true)
         
         try {
@@ -1912,9 +2001,11 @@ const HomeTab: React.FC = () => {
 
               window?.Telegram?.WebApp?.showPopup?.({
                 title: 'Claim Successful!',
-                message: `You claimed ${walletConfig.currencySymbol}${claimAmount}`,
+                message: `You claimed ${walletConfig.currencySymbol}${claimAmount.toFixed(4)}`,
                 buttons: [{ type: 'ok' }],
               })
+            } else {
+              throw new Error('Invalid claim amount')
             }
           } else {
             // Ad was not completed
@@ -1927,7 +2018,7 @@ const HomeTab: React.FC = () => {
         } catch (error) {
           console.error('Error in ad viewing process:', error)
           window?.Telegram?.WebApp?.showPopup?.({
-            title: 'Error',
+            title: 'Ad Error',
             message: 'Something went wrong with the ad. Please try again.',
             buttons: [{ type: 'ok' }],
           })
@@ -1957,6 +2048,14 @@ const HomeTab: React.FC = () => {
     }
   }
 
+  // Debug info for libtl status
+  const getLibtlStatus = () => {
+    if (appConfigLoading) return 'Loading configuration...'
+    if (!appConfig.libtlZoneId) return 'Not configured in Firebase'
+    if (!libtlLoaded) return 'Loading ad provider...'
+    return 'Ad provider ready'
+  }
+
   return (
     <div className="home-tab-con transition-all duration-300 pb-10">
       <div className="relative mx-4 mt-0 mb-2">
@@ -1984,7 +2083,7 @@ const HomeTab: React.FC = () => {
 
         {/* Live animated amount */}
         <div className="text-white mt-5 text-2xl font-bold">
-          {currentAmount}{' '}
+          {currentAmount.toFixed(4)}{' '}
           <span className="text-purple-400">{walletConfig.currencySymbol}</span>
         </div>
 
@@ -2020,24 +2119,22 @@ const HomeTab: React.FC = () => {
               : canClaim
               ? (showingAd
                   ? 'Showing Ad...'
-                  : `Claim ${walletConfig.currencySymbol}${currentAmount}`)
+                  : `Claim ${walletConfig.currencySymbol}${currentAmount.toFixed(4)}`)
               : 'Mining...'}
           </button>
         </div>
 
         {/* libtl SDK status indicator */}
-        {!libtlLoaded && (
-          <div className="mt-4 text-xs text-yellow-400">
-            Loading ads provider... Please wait
-          </div>
-        )}
+        <div className="mt-4 text-xs text-gray-400">
+          {getLibtlStatus()}
+        </div>
       </div>
 
       <div className="bg-[#ffffff0d] border border-[#2d2d2e] rounded-xl mx-4 mt-8 p-4 flex justify-between items-center">
         <div className="flex flex-col items-center w-1/2 border-r border-[#2d2d2e]">
           <div className="shine-effect text-2xl font-bold text-green-400">
             {walletConfig.currencySymbol}
-            {(userData?.totalEarned ?? 0)}
+            {(userData?.totalEarned ?? 0).toFixed(2)}
           </div>
           <div className="text-sm text-gray-400">Total Earned</div>
         </div>
