@@ -1701,9 +1701,9 @@ const Topbar = () => {
               </span>
             </div>
           </div>
-          <div className="bg-[#007aff] text-white px-3 py-0.5 rounded-full flex items-center gap-2">
+ <div className="bg-[#007aff] text-white px-3 py-0.5 rounded-full flex items-center gap-2">
             <Wallet className="w-5 h-5" />
-            <span>{walletConfig.currencySymbol}{userData?.balance || '0.00'}</span>
+            <span>{walletConfig.currencySymbol}{userData?.balance.toFixed(2) || '0.00'}</span>
           </div>
         </div>
       </div>
@@ -2910,130 +2910,68 @@ const DailyTasks: React.FC<DailyTasksProps> = ({
 
 // Enhanced AdsDashboard Component with Complete Ads Tracking
 const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) => {
-  const [ads, setAds] = React.useState<Ad[]>([]);
+  const [ads, setAds] = React.useState<Ad[]>([
+    { id: 1, title: 'Ads1', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'gigapub', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: '4338' },
+    { id: 2, title: 'Ads2', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'onclicka', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: '6098415' },
+    { id: 3, title: 'Ads3', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'adsovio', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: '7721' },
+    { id: 4, title: 'Ads4', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'adextra', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: 'STATIC_FROM_INDEX_HTML' },
+  ]);
+
   const [isWatchingAd, setIsWatchingAd] = React.useState<number | null>(null);
   const [scriptLoaded, setScriptLoaded] = React.useState<Record<Provider, boolean>>({
     gigapub: false,
     onclicka: false,
     adsovio: false,
-    adextra: false,
-    monetag: false,
+    adextra: true, // AdExtra comes from index.html
   });
   const [scriptsInitialized, setScriptsInitialized] = React.useState<Record<Provider, boolean>>({
     gigapub: false,
     onclicka: false,
     adsovio: false,
-    adextra: false,
-    monetag: false,
+    adextra: true,
   });
   const [cooldowns, setCooldowns] = React.useState<Record<string, number>>({});
   const [lastWatched, setLastWatched] = React.useState<Record<string, Date>>({});
   const [userMessages, setUserMessages] = React.useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [concurrentLock, setConcurrentLock] = React.useState<boolean>(false);
   const [timeUntilReset, setTimeUntilReset] = React.useState<string>('24:00:00');
-  const [, setUserAdStats] = React.useState({
-    today: 0,
-    total: 0,
-    lastAdTime: null as Date | null
-  });
 
-  const { addTransaction } = useUserData();
+  const { updateUser, addTransaction } = useUserData();
   const { walletConfig } = useWalletConfig();
-  const { appConfig } = useAppConfig();
+
+  // Concurrency lock management
   const concurrencyLockRef = useRef<boolean>(false);
 
-  // Enhanced message handler
   const showMessage = (type: 'success' | 'error' | 'info', message: string) => {
     setUserMessages({ type, message });
     setTimeout(() => setUserMessages(null), 4000);
   };
 
-  // Bangladesh time utilities
   const getBangladeshTime = (): Date => {
     const now = new Date();
     const utc = now.getTime() + now.getTimezoneOffset() * 60000;
     return new Date(utc + 3600000 * 6);
   };
-
   const formatDate = (date: Date): string => date.toISOString().split('T')[0];
 
-  // Enhanced Firebase helpers with ads tracking
+  // Firebase helpers
   const firebaseRequest = {
-    updateUserAdStats: async (telegramId: number, adData: {
-      provider: string;
-      reward: number;
-      adId: number;
-    }): Promise<boolean> => {
+    updateUser: async (telegramId: number, updates: Partial<UserData>): Promise<boolean> => {
       try {
-        const userRef = ref(db, `users/${telegramId}`);
-        const userSnap = await get(userRef);
-        
-        if (!userSnap.exists()) return false;
-
-        const user = userSnap.val() as UserData;
-        const now = new Date();
-        const today = formatDate(now);
-        
-        // Calculate new stats
-        const currentTodayAds = user.adsWatchedToday || 0;
-        const currentTotalAds = user.totalAdsWatched || 0;
-        const todayStats = user.stats?.[today] || { ads: 0, earned: 0 };
-        
-        const updates: any = {
-          adsWatchedToday: currentTodayAds + 1,
-          totalAdsWatched: currentTotalAds + 1,
-          lastAdWatch: now.toISOString(),
-          lastActive: now.toISOString(),
-          balance: (user.balance || 0) + adData.reward,
-          totalEarned: (user.totalEarned || 0) + adData.reward,
-          stats: {
-            ...user.stats,
-            [today]: {
-              ads: todayStats.ads + 1,
-              earned: todayStats.earned + adData.reward
-            }
-          }
-        };
-
-        // Update ads history
-        const timestamp = now.getTime().toString();
-        updates[`adsHistory/${timestamp}`] = {
-          provider: adData.provider,
-          reward: adData.reward,
-          adId: adData.adId,
-          timestamp: now.toISOString()
-        };
-
-        await update(userRef, updates);
+        await update(ref(db, `users/${telegramId}`), updates);
         return true;
       } catch (e) {
-        console.error('Error updating user ad stats:', e);
+        console.error('Error updating user:', e);
         return false;
       }
     },
-
-    updateUserAdWatch: async (telegramId: number, provider: string): Promise<boolean> => {
-      try {
-        const userAdRef = ref(db, `userAds/${telegramId}/${provider}`);
-        const now = new Date().toISOString();
-        
-        const userAdSnap = await get(userAdRef);
-        const currentData = userAdSnap.exists() ? userAdSnap.val() : { watchedToday: 0 };
-        
-        await update(userAdRef, {
-          watchedToday: (currentData.watchedToday || 0) + 1,
-          lastWatched: now,
-          lastUpdated: now,
-          totalWatched: (currentData.totalWatched || 0) + 1
-        });
-        
-        return true;
-      } catch (e) {
-        console.error('Error updating user ad watch:', e);
-        return false;
-      }
+    addTransaction: async (transaction: any): Promise<string> => {
+      const transactionsRef = ref(db, 'transactions');
+      const newRef = push(transactionsRef);
+      const id = newRef.key!;
+      await set(newRef, { ...transaction, id });
+      return id;
     },
-
     addReferralCommission: async (referredUserId: number, earnedAmount: number): Promise<boolean> => {
       try {
         const commissionRate = 10;
@@ -3053,25 +2991,16 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
         const referrer = referrerSnapshot.val() as UserData;
         const newBalance = (referrer.balance || 0) + commission;
         const newTotalEarned = (referrer.totalEarned || 0) + commission;
-        
-        await update(referrerRef, { 
-          balance: newBalance, 
-          totalEarned: newTotalEarned 
-        });
+        await update(referrerRef, { balance: newBalance, totalEarned: newTotalEarned });
 
-        // Update referral data
         const referralRef = ref(db, `referrals/${referrerId}`);
         const referralSnapshot = await get(referralRef);
-        
         if (referralSnapshot.exists()) {
           const data = referralSnapshot.val() as any;
           if (!data.referredUsers) data.referredUsers = {};
-          
           if (data.referredUsers[referredUserId]) {
-            data.referredUsers[referredUserId].totalEarned = 
-              (data.referredUsers[referredUserId].totalEarned || 0) + earnedAmount;
-            data.referredUsers[referredUserId].commissionEarned = 
-              (data.referredUsers[referredUserId].commissionEarned || 0) + commission;
+            data.referredUsers[referredUserId].totalEarned += earnedAmount;
+            data.referredUsers[referredUserId].commissionEarned += commission;
           } else {
             data.referredUsers[referredUserId] = {
               joinedAt: new Date().toISOString(),
@@ -3079,23 +3008,18 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
               commissionEarned: commission,
             };
           }
-          
           data.referralEarnings = (data.referralEarnings || 0) + commission;
           data.referredCount = Object.keys(data.referredUsers).length;
           await set(referralRef, data);
         }
 
-        // Add commission transaction
-        const transactionsRef = ref(db, `transactions/${referrerId}`);
-        const newTransactionRef = push(transactionsRef);
-        await set(newTransactionRef, {
-          id: newTransactionRef.key,
+        await firebaseRequest.addTransaction({
           userId: referrerId.toString(),
           type: 'referral_commission',
           amount: commission,
           description: `${commissionRate}% commission from referral ${referredUser.firstName || referredUser.username}`,
           status: 'completed',
-          timestamp: Date.now(),
+          createdAt: new Date().toISOString(),
         });
 
         return true;
@@ -3106,7 +3030,7 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
     },
   };
 
-  // Enhanced daily reset with ads tracking
+  // Daily reset @ 6AM BD
   const checkAndPerformDailyReset = React.useCallback(async () => {
     try {
       const bdTime = getBangladeshTime();
@@ -3119,27 +3043,18 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
 
       if (shouldReset) {
         await set(resetRef, today);
-        
-        // Reset all users' daily ads count
-        const usersRef = ref(db, 'users');
-        const usersSnapshot = await get(usersRef);
-        
+        const usersAdsRef = ref(db, 'userAds');
+        const usersSnapshot = await get(usersAdsRef);
         if (usersSnapshot.exists()) {
           const usersData = usersSnapshot.val();
           const updates: any = {};
-          
           Object.keys(usersData).forEach((uid) => {
-            updates[`users/${uid}/adsWatchedToday`] = 0;
-            // Reset userAds daily counts
-            Object.keys(usersData[uid]?.userAds || {}).forEach((provider) => {
+            Object.keys(usersData[uid]).forEach((provider) => {
               updates[`userAds/${uid}/${provider}/watchedToday`] = 0;
               updates[`userAds/${uid}/${provider}/lastReset`] = new Date().toISOString();
             });
           });
-          
-          if (Object.keys(updates).length > 0) {
-            await update(ref(db), updates);
-          }
+          if (Object.keys(updates).length > 0) await update(ref(db), updates);
         }
       }
     } catch (e) {
@@ -3147,7 +3062,6 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
     }
   }, []);
 
-  // Time until reset calculation
   React.useEffect(() => {
     const updateResetTime = () => {
       const bdTime = getBangladeshTime();
@@ -3159,7 +3073,6 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
       const hours = Math.floor(diff / 3600000);
       const minutes = Math.floor((diff % 3600000) / 60000);
       const seconds = Math.floor((diff % 60000) / 1000);
-      
       setTimeUntilReset(
         `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
       );
@@ -3167,70 +3080,50 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
 
     checkAndPerformDailyReset();
     updateResetTime();
-    
     const t = setInterval(updateResetTime, 1000);
     const r = setInterval(checkAndPerformDailyReset, 60000);
-    
     return () => {
       clearInterval(t);
       clearInterval(r);
     };
   }, [checkAndPerformDailyReset]);
 
-  // Load ads configuration
+  // Load ads config from Firebase
   React.useEffect(() => {
     const adsRef = ref(db, 'ads');
     const unsubscribe = onValue(adsRef, (snapshot) => {
-      if (!snapshot.exists()) {
-        console.log('No ads configuration found in Firebase');
-        setAds([]);
-        return;
-      }
-      
+      if (!snapshot.exists()) return;
       const adsData: Record<string, any> = snapshot.val();
-      console.log('Loaded ads config from Firebase:', adsData);
-      
-      const adsArray: Ad[] = [];
-      const providers: Provider[] = ['gigapub', 'onclicka', 'adsovio', 'adextra', 'monetag'];
-      
-      providers.forEach((provider, index) => {
-        const cfg = adsData[provider];
-        if (cfg) {
-          const ad: Ad = {
-            id: index + 1,
-            title: `Ads${index + 1}`,
-            description: `${walletConfig.currency} ${cfg.reward || 0.5} per ad`,
-            watched: 0,
-            dailyLimit: cfg.dailyLimit || 5,
-            hourlyLimit: cfg.hourlyLimit || 2,
-            provider: provider,
-            waitTime: cfg.waitTime || 5,
-            cooldown: cfg.cooldown || 60,
-            reward: cfg.reward || 0.5,
+      setAds((prev) =>
+        prev.map((ad) => {
+          const cfg = adsData[ad.provider];
+          if (!cfg) return ad;
+          return {
+            ...ad,
+            reward: cfg.reward ?? ad.reward,
+            dailyLimit: cfg.dailyLimit ?? ad.dailyLimit,
+            hourlyLimit: cfg.hourlyLimit ?? ad.hourlyLimit,
+            cooldown: cfg.cooldown ?? ad.cooldown,
             enabled: cfg.enabled !== false,
-            appId: cfg.appId || '',
+            waitTime: cfg.waitTime ?? ad.waitTime,
+            appId: cfg.appId ?? ad.appId,
+            description: `${walletConfig.currency} ${cfg.reward ?? ad.reward} per ad`,
           };
-          adsArray.push(ad);
-        }
-      });
-      
-      setAds(adsArray);
-      setScriptsInitialized({
+        })
+      );
+      setScriptsInitialized((prev) => ({
+        ...prev,
         gigapub: false,
         onclicka: false,
         adsovio: false,
-        adextra: false,
-        monetag: false,
-      });
+      }));
     });
-
     return () => unsubscribe();
   }, [walletConfig.currency]);
 
-  // Load user's ad watch history and stats
+  // Load user's ad watch history
   React.useEffect(() => {
-    if (!userData?.telegramId || ads.length === 0) return;
-    
+    if (!userData?.telegramId) return;
     const userAdsRef = ref(db, `userAds/${userData.telegramId}`);
     const unsubscribe = onValue(userAdsRef, (snapshot) => {
       if (!snapshot.exists()) return;
@@ -3249,66 +3142,13 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
           const lastReset = pData?.lastReset;
           if (lastReset && formatDate(new Date(lastReset)) !== today) watchedToday = 0;
 
-          return { 
-            ...ad, 
-            watched: watchedToday, 
-            lastWatched: pData?.lastWatched ? new Date(pData.lastWatched) : undefined 
-          };
+          return { ...ad, watched: watchedToday, lastWatched: pData?.lastWatched ? new Date(pData.lastWatched) : undefined };
         })
       );
       setLastWatched(newLastWatched);
     });
-
-    // Update local user ad stats
-    if (userData) {
-      setUserAdStats({
-        today: userData.adsWatchedToday || 0,
-        total: userData.totalAdsWatched || 0,
-        lastAdTime: userData.lastAdWatch ? new Date(userData.lastAdWatch) : null
-      });
-    }
-
     return () => unsubscribe();
-  }, [userData?.telegramId, ads, userData?.adsWatchedToday, userData?.totalAdsWatched, userData?.lastAdWatch]);
-
-  // Script initialization (same as before)
-  React.useEffect(() => {
-    const initScripts = () => {
-      ads.forEach((ad) => {
-        if (!ad.enabled || !ad.appId || scriptsInitialized[ad.provider]) return;
-        
-        console.log(`Initializing ${ad.provider} with appId:`, ad.appId);
-        
-        switch (ad.provider) {
-          case 'gigapub': {
-            if (!document.getElementById('gigapub-script')) {
-              const s = document.createElement('script');
-              s.id = 'gigapub-script';
-              s.src = `https://ad.gigapub.tech/script?id=${ad.appId}`;
-              s.async = true;
-              s.onload = () => {
-                setScriptLoaded((p) => ({ ...p, gigapub: typeof window.showGiga === 'function' }));
-                setScriptsInitialized((p) => ({ ...p, gigapub: true }));
-              };
-              s.onerror = () => {
-                setScriptsInitialized((p) => ({ ...p, gigapub: true }));
-              };
-              document.head.appendChild(s);
-            } else {
-              setScriptLoaded((p) => ({ ...p, gigapub: true }));
-              setScriptsInitialized((p) => ({ ...p, gigapub: true }));
-            }
-            break;
-          }
-          // ... other providers initialization (same as before)
-        }
-      });
-    };
-    
-    if (ads.length > 0) {
-      initScripts();
-    }
-  }, [ads, scriptsInitialized, appConfig.monetagAppId]);
+  }, [userData?.telegramId]);
 
   // Cooldown ticker
   React.useEffect(() => {
@@ -3326,66 +3166,261 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
     return () => clearInterval(iv);
   }, [lastWatched, ads]);
 
-  // ENHANCED: Complete ad tracking function
-  const handleCompleteAd = async (adId: number): Promise<boolean> => {
-    if (!userData) {
-      showMessage('error', 'User not loaded. Try again.');
-      return false;
-    }
-
-    const ad = ads.find((a) => a.id === adId);
-    if (!ad) return false;
-
-    try {
-      const adData = {
-        provider: ad.provider,
-        reward: ad.reward,
-        adId: ad.id
-      };
-
-      // Update user stats in Firebase
-      const statsUpdated = await firebaseRequest.updateUserAdStats(userData.telegramId, adData);
-      
-      if (!statsUpdated) {
-        showMessage('error', 'Failed to update your stats. Please try again.');
-        return false;
+  // Onclicka initialization
+  useEffect(() => {
+    const loadOnclickaScript = () => {
+      if (document.getElementById('onclicka-script')) {
+        console.log('Onclicka script already loaded');
+        return;
       }
 
-      // Update provider-specific ad count
-      await firebaseRequest.updateUserAdWatch(userData.telegramId, ad.provider);
+      const script = document.createElement('script');
+      script.id = 'onclicka-script';
+      script.src = 'https://js.onclckvd.com/in-stream-ad-admanager/tma.js';
+      script.async = true;
+      
+      script.onload = async () => {
+        console.log('Onclicka script loaded successfully');
+        
+        try {
+          if (window.initCdTma) {
+            const show = await window.initCdTma({ id: "6098415" });
+            window.showAd = show;
+            setScriptLoaded(prev => ({ ...prev, onclicka: typeof window.showAd === 'function' }));
+            console.log('Onclicka initialized successfully');
+          } else {
+            console.error('initCdTma not defined after script load');
+            setScriptLoaded(prev => ({ ...prev, onclicka: false }));
+          }
+        } catch (error) {
+          console.error('Onclicka initialization error:', error);
+          setScriptLoaded(prev => ({ ...prev, onclicka: false }));
+        }
+      };
+      
+      script.onerror = () => {
+        console.error('Failed to load Onclicka script');
+        setScriptLoaded(prev => ({ ...prev, onclicka: false }));
+      };
+      
+      document.head.appendChild(script);
+    };
 
-      // Add transaction record
+    // Only load if there's an Onclicka ad enabled
+    const onclickaAd = ads.find(ad => ad.provider === 'onclicka' && ad.enabled);
+    if (onclickaAd && !scriptLoaded.onclicka) {
+      loadOnclickaScript();
+    }
+  }, [ads, scriptLoaded.onclicka]);
+
+  // Initialize other ad provider scripts
+  React.useEffect(() => {
+    const initScripts = () => {
+      ads.forEach((ad) => {
+        if (!ad.enabled || scriptsInitialized[ad.provider]) return;
+        
+        switch (ad.provider) {
+          case 'gigapub': {
+            if (!document.getElementById('gigapub-script')) {
+              const s = document.createElement('script');
+              s.id = 'gigapub-script';
+              s.src = `https://ad.gigapub.tech/script?id=${ad.appId}`;
+              s.async = true;
+              s.onload = () => {
+                setScriptLoaded((p) => ({ ...p, gigapub: typeof window.showGiga === 'function' }));
+                setScriptsInitialized((p) => ({ ...p, gigapub: true }));
+              };
+              s.onerror = () => setScriptsInitialized((p) => ({ ...p, gigapub: true }));
+              document.head.appendChild(s);
+            } else {
+              setScriptLoaded((p) => ({ ...p, gigapub: true }));
+              setScriptsInitialized((p) => ({ ...p, gigapub: true }));
+            }
+            break;
+          }
+          case 'adsovio': {
+            if (!document.getElementById('adsovio-script')) {
+              const s = document.createElement('script');
+              s.id = 'adsovio-script';
+              s.src = `https://adsovio.com/cdn/ads.js?app_uid=${ad.appId}`;
+              s.async = true;
+              s.onload = () => {
+                setScriptLoaded((p) => ({ ...p, adsovio: typeof window.showAdsovio === 'function' }));
+                setScriptsInitialized((p) => ({ ...p, adsovio: true }));
+              };
+              s.onerror = () => setScriptsInitialized((p) => ({ ...p, adsovio: true }));
+              document.head.appendChild(s);
+            } else {
+              setScriptLoaded((p) => ({ ...p, adsovio: true }));
+              setScriptsInitialized((p) => ({ ...p, adsovio: true }));
+            }
+            break;
+          }
+          case 'adextra': {
+            // AdExtra is expected to be included in index.html and exposes window.p_adextra
+            setScriptLoaded((p) => ({ ...p, adextra: typeof window.p_adextra === 'function' || p.adextra }));
+            setScriptsInitialized((p) => ({ ...p, adextra: true }));
+            break;
+          }
+        }
+      });
+    };
+    initScripts();
+  }, [ads, scriptsInitialized]);
+
+  const updateUserAdWatch = async (adId: number) => {
+    if (!userData?.telegramId) return;
+    const ad = ads.find((a) => a.id === adId);
+    if (!ad) return;
+
+    const userAdRef = ref(db, `userAds/${userData.telegramId}/${ad.provider}`);
+    const now = new Date().toISOString();
+    await update(userAdRef, {
+      watchedToday: (ad.watched || 0) + 1,
+      lastWatched: now,
+      lastUpdated: now,
+    });
+  };
+
+  const recordAdWatch = async (adId: number): Promise<number> => {
+    if (!userData) {
+      showMessage('error', 'User not loaded. Try again.');
+      return 0;
+    }
+    const ad = ads.find((a) => a.id === adId);
+    if (!ad) return 0;
+
+    try {
+      const now = new Date();
+      const lastWatch = userData.lastAdWatch ? new Date(userData.lastAdWatch) : null;
+      let newAdsWatchedToday = userData.adsWatchedToday || 0;
+      if (lastWatch && lastWatch.toDateString() !== now.toDateString()) newAdsWatchedToday = 0;
+
+      const reward = ad.reward;
+      const newBalance = userData.balance + reward;
+      const newTotalEarned = userData.totalEarned + reward;
+      const newAdsCount = newAdsWatchedToday + 1;
+
+      await updateUser({
+        balance: newBalance,
+        totalEarned: newTotalEarned,
+        adsWatchedToday: newAdsCount,
+        lastAdWatch: now.toISOString(),
+      });
+
       await addTransaction({
         userId: userData.telegramId,
         type: 'ad_reward',
-        amount: ad.reward,
-        description: `Ad watched: ${ad.title} (${ad.provider})`,
+        amount: reward,
+        description: `Ad watched: ${ad.title}`,
         timestamp: Date.now(),
         status: 'completed'
       });
 
-      // Update referral commission
       if (userData.referredBy) {
-        await firebaseRequest.addReferralCommission(userData.telegramId, ad.reward);
+        await firebaseRequest.addReferralCommission(userData.telegramId, reward);
       }
 
-      // Update local state
-      setUserAdStats(prev => ({
-        today: prev.today + 1,
-        total: prev.total + 1,
-        lastAdTime: new Date()
-      }));
-
-      return true;
-    } catch (error) {
-      console.error('Error completing ad:', error);
-      showMessage('error', 'Error recording ad completion.');
-      return false;
+      return reward;
+    } catch (e) {
+      console.error('recordAdWatch error:', e);
+      showMessage('error', 'Error recording reward.');
+      return 0;
     }
   };
 
-  // Enhanced showAd function with complete tracking
+  const handleAdCompletion = async (adId: number) => {
+    await updateUserAdWatch(adId);
+    const earned = await recordAdWatch(adId);
+    if (earned > 0) showMessage('success', `Ad completed! You earned ${walletConfig.currencySymbol}${earned}`);
+  };
+
+  const formatTime = (sec: number): string => (sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${sec % 60}s`);
+
+  // Enhanced AdExtra handler with proper timeout and error handling (from 2nd code)
+  const runAdExtra = async (adId: number, ad: Ad) => {
+    if (typeof window.p_adextra !== 'function') {
+      showMessage('info', 'AdExtra initializing… please try again in a moment');
+      concurrencyLockRef.current = false;
+      setConcurrentLock(false);
+      setIsWatchingAd(null);
+      return;
+    }
+    const timeoutMs = Math.max(15000, ad.waitTime * 1000 + 5000);
+
+    const release = () => {
+      concurrencyLockRef.current = false;
+      setConcurrentLock(false);
+      setIsWatchingAd(null);
+    };
+    const onSuccess = async () => {
+      console.log('AdExtra: Success callback received');
+      await handleAdCompletion(adId);
+      setAds((prev) => prev.map((a) => (a.id === adId ? { ...a, watched: a.watched + 1 } : a)));
+      setLastWatched((prev) => ({ ...prev, [ad.provider]: new Date() }));
+      release();
+    };
+    const onError = () => {
+      console.log('AdExtra: Error callback received');
+      showMessage('error', 'Ad failed or was skipped. Try again.');
+      release();
+    };
+
+    const to = setTimeout(() => {
+      console.warn('AdExtra timed out without callback');
+      onError();
+    }, timeoutMs);
+
+    const wrappedSuccess = () => {
+      clearTimeout(to);
+      onSuccess();
+    };
+    const wrappedError = () => {
+      clearTimeout(to);
+      onError();
+    };
+
+    try {
+      console.log('AdExtra: Calling p_adextra');
+      window.p_adextra(wrappedSuccess, wrappedError);
+    } catch (error) {
+      console.error('AdExtra: Error calling p_adextra', error);
+      clearTimeout(to);
+      onError();
+    }
+  };
+
+  // Onclicka handler
+  const runOnclicka = async (adId: number, ad: Ad) => {
+    if (!window.showAd) {
+      showMessage('error', 'Onclicka not loaded properly. Please refresh and try again.');
+      concurrencyLockRef.current = false;
+      setConcurrentLock(false);
+      setIsWatchingAd(null);
+      return;
+    }
+
+    try {
+      showMessage('info', 'Loading Onclicka...');
+      
+      await window.showAd();
+      await handleAdCompletion(adId);
+      setAds((prev) => prev.map((a) => (a.id === adId ? { ...a, watched: a.watched + 1 } : a)));
+      setLastWatched((prev) => ({ ...prev, [ad.provider]: new Date() }));
+      showMessage('success', `Onclicka completed! You earned ${walletConfig.currencySymbol}${ad.reward}`);
+    } catch (error) {
+      console.error('Onclicka error:', error);
+      showMessage('error', 'Onclicka failed to load. Please try again later.');
+    } finally {
+      concurrencyLockRef.current = false;
+      setConcurrentLock(false);
+      setIsWatchingAd(null);
+    }
+  };
+
+  // Enhanced showAd with proper concurrency control
   const showAd = async (adId: number) => {
+    // Check concurrency lock
     if (concurrencyLockRef.current) {
       showMessage('info', 'Please complete the current ad first');
       return;
@@ -3396,18 +3431,13 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
       showMessage('error', 'Ad not found');
       return;
     }
-    
     if (!ad.enabled) {
       showMessage('error', 'This ad provider is temporarily unavailable');
       return;
     }
-    
-    if (!ad.appId) {
-      showMessage('error', 'Ad provider configuration is incomplete');
-      return;
-    }
 
-    if (ad.provider !== 'adextra' && ad.provider !== 'monetag' && !scriptLoaded[ad.provider]) {
+    // AdExtra should not wait for dynamic scriptLoaded
+    if (ad.provider !== 'adextra' && !scriptLoaded[ad.provider]) {
       showMessage('info', 'Ad provider is loading... Please wait a moment');
       return;
     }
@@ -3417,7 +3447,6 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
       showMessage('info', 'Daily limit reached. Come back tomorrow!');
       return;
     }
-    
     if (lastWatched[ad.provider]) {
       const elapsed = (now.getTime() - lastWatched[ad.provider].getTime()) / 1000;
       if (elapsed < ad.cooldown) {
@@ -3434,216 +3463,144 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
     showMessage('info', 'Preparing ad…');
 
     try {
-      let adCompleted = false;
-
       // Handle different providers
       if (ad.provider === 'adextra') {
-        adCompleted = await runAdExtra(adId, ad);
-      } else if (ad.provider === 'onclicka') {
-        adCompleted = await runOnclicka(adId, ad);
-      } else if (ad.provider === 'monetag') {
-        adCompleted = await runMonetag(adId, ad);
-      } else if (ad.provider === 'gigapub' && window.showGiga) {
-        await window.showGiga();
+        await runAdExtra(adId, ad);
+        return;
+      }
+
+      if (ad.provider === 'onclicka') {
+        await runOnclicka(adId, ad);
+        return;
+      }
+
+      // Handle other providers (gigapub, adsovio)
+      const minWaitTime = ad.waitTime;
+      const start = Date.now();
+      let adCompleted = false;
+
+      if (ad.provider === 'gigapub' && window.showGiga) {
+        await window.showGiga(); 
         adCompleted = true;
       } else if (ad.provider === 'adsovio' && window.showAdsovio) {
-        await window.showAdsovio();
+        await window.showAdsovio(); 
         adCompleted = true;
       } else {
         throw new Error('Ad provider function not available');
       }
 
       if (adCompleted) {
-        // Complete the ad tracking
-        await handleCompleteAd(adId);
-        
-        // Update local ad state
-        setAds(prev => prev.map(a => 
-          a.id === adId ? { ...a, watched: a.watched + 1 } : a
-        ));
-        setLastWatched(prev => ({ ...prev, [ad.provider]: now }));
-        
-        showMessage('success', `Ad completed! You earned ${walletConfig.currencySymbol}${ad.reward}`);
-      }
-
-    } catch (error) {
-      console.error('Ad error:', error);
-      showMessage('error', 'Ad was not completed properly.');
-    } finally {
-      concurrencyLockRef.current = false;
-      setConcurrentLock(false);
-      setIsWatchingAd(null);
-    }
-  };
-
-  // Provider-specific handlers (same structure as before)
-  const runAdExtra = async (_adId: number, ad: Ad): Promise<boolean> => {
-    return new Promise((resolve) => {
-      if (typeof window.p_adextra !== 'function') {
-        resolve(false);
-        return;
-      }
-
-      const timeoutMs = Math.max(15000, ad.waitTime * 1000 + 5000);
-      const timeout = setTimeout(() => resolve(false), timeoutMs);
-
-      window.p_adextra(
-        () => {
-          clearTimeout(timeout);
-          resolve(true);
-        },
-        () => {
-          clearTimeout(timeout);
-          resolve(false);
+        const elapsed = (Date.now() - start) / 1000;
+        if (elapsed >= minWaitTime) {
+          await handleAdCompletion(adId);
+          setAds((prev) => prev.map((a) => (a.id === adId ? { ...a, watched: a.watched + 1 } : a)));
+          setLastWatched((prev) => ({ ...prev, [ad.provider]: now }));
+        } else {
+          throw new Error(`Please watch the ad completely (minimum ${minWaitTime} seconds)`);
         }
-      );
-    });
-  };
-
-  const runOnclicka = async (_adId: number, _ad: Ad): Promise<boolean> => {
-    if (!window.showAd) return false;
-    
-    try {
-      await window.showAd();
-      return true;
-    } catch {
-      return false;
+      }
+    } catch (e) {
+      console.error('Ad error:', e);
+      showMessage('error', 'Ad was not completed.');
+    } finally {
+      // Only release lock for non-callback providers
+      if (ad?.provider !== 'adextra' && ad?.provider !== 'onclicka') {
+        concurrencyLockRef.current = false;
+        setConcurrentLock(false);
+        setIsWatchingAd(null);
+      }
     }
   };
-
-  const runMonetag = async (_adId: number, _ad: Ad): Promise<boolean> => {
-    if (!window.monetag) return false;
-    
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => resolve(false), 30000);
-      
-      if (window.monetag?.onAdCompleted) {
-        window.monetag.onAdCompleted = () => {
-          clearTimeout(timeout);
-          resolve(true);
-        };
-      } else {
-        // Fallback: assume success after delay
-        setTimeout(() => {
-          clearTimeout(timeout);
-          resolve(true);
-        }, 10000);
-      }
-    });
-  };
-
-  const formatTime = (sec: number): string => 
-    sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${sec % 60}s`;
 
   const isAdDisabled = (ad: Ad) => {
     if (!ad.enabled) return true;
-    if (!ad.appId) return true;
     if (ad.dailyLimit > 0 && ad.watched >= ad.dailyLimit) return true;
     if (cooldowns[ad.provider]) return true;
-    if (ad.provider !== 'adextra' && ad.provider !== 'monetag' && !scriptLoaded[ad.provider]) return true;
+    if (ad.provider !== 'adextra' && !scriptLoaded[ad.provider]) return true;
     if (concurrentLock && isWatchingAd !== ad.id) return true;
     return false;
   };
 
   const getButtonText = (ad: Ad) => {
     if (!ad.enabled) return 'Temporarily Disabled';
-    if (!ad.appId) return 'Not Configured';
     if (ad.dailyLimit > 0 && ad.watched >= ad.dailyLimit) return 'Daily Limit Reached';
     if (cooldowns[ad.provider]) return `Wait ${formatTime(cooldowns[ad.provider])}`;
-    if (ad.provider !== 'adextra' && ad.provider !== 'monetag' && !scriptLoaded[ad.provider]) return 'Loading...';
+    if (ad.provider !== 'adextra' && !scriptLoaded[ad.provider]) return 'Loading...';
     if (concurrentLock && isWatchingAd !== ad.id) return 'Another in Progress';
     if (isWatchingAd === ad.id) return 'Watching Ad...';
     return 'Watch Now';
   };
 
-  if (ads.length === 0) {
-    return (
-      <div className="flex justify-center items-center p-8">
-        <div className="text-center">
-          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-neutral-400" />
-          <p className="text-neutral-400">Loading ads configuration...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="grid grid-cols-1 gap-4 text-neutral-200">
-      {/* User Ads Statistics */}
-      <div className="rounded-xl p-2 border border-white/10 shadow-xl bg-neutral-950/40 backdrop-blur-sm">
-        <div className="flex justify-between items-center mb-2">
-          <h3 className="text-lg font-semibold text-white">Ads Progress</h3>
-          <div className="text-sm text-neutral-400">
-            Reset: <span className="text-neutral-100">{timeUntilReset}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Messages */}
+    <div className="grid grid-cols-2 gap-2 text-neutral-200">
       {userMessages && (
         <div
-          className={`p-3 rounded-2xl text-center font-semibold tracking-wide shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] ring-1 ring-white/10 backdrop-blur-sm ${
+          className={`col-span-2 p-3 rounded-2xl mb-2 text-center font-semibold tracking-wide shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] ring-1 ring-white/10 backdrop-blur-sm ${
             userMessages.type === 'success'
-              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+              ? 'bg-white/10 text-white'
               : userMessages.type === 'error'
-              ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-              : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+              ? 'bg-white/5 text-white'
+              : 'bg-white/8 text-white'
           }`}
         >
           {userMessages.message}
         </div>
       )}
 
-      {/* Ads Grid */}
-      <div className="grid grid-cols-2 gap-3">
-        {ads.map((ad) => (
-          <div
-            key={ad.id}
-            className="rounded-xl p-3 border border-white/10 shadow-[0_10px_25px_-12px_rgba(0,0,0,0.7)] bg-neutral-950/50 backdrop-blur-sm hover:border-white/20 transition-colors"
-          >
-            <div className="flex items-start gap-3 mb-3">
-              <div className="p-3 rounded-2xl shadow-inner bg-gradient-to-tr from-neutral-800 via-neutral-700 to-neutral-600 ring-1 ring-white/10 flex items-center justify-center">
-                <svg className="w-7 h-7 text-white" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" />
-                </svg>
-              </div>
-              <div className="min-w-0">
-                <h3 className="font-semibold text-white text-base leading-tight truncate">
-                  {ad.title}
-                </h3>
-                <p className="text-[12px] text-neutral-400 mt-1 line-clamp-2">
-                  {ad.description}
-                </p>
-              </div>
-            </div>
+      <div className="col-span-2 rounded-xl p-3 border border-white/10 shadow-xl bg-neutral-950/40 backdrop-blur-sm">
+        <div className="flex justify-between items-center text-sm">
+          <span className="text-neutral-400">Daily reset in:</span>
+          <span className="text-neutral-100 font-semibold tabular-nums">{timeUntilReset}</span>
+          <span className="text-neutral-500">Reset: 6 AM (BD Time)</span>
+        </div>
+      </div>
 
-            {/* Progress Bar */}
-            <div className="w-full bg-neutral-800/40 rounded-full h-3 mb-3 overflow-hidden ring-1 ring-white/10">
-              <div
-                className="h-3 rounded-full transition-all duration-500 bg-gradient-to-r from-neutral-300 to-neutral-500 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.5)]"
-                style={{ width: `${Math.min((ad.watched / ad.dailyLimit) * 100, 100)}%` }}
-              />
+      {ads.map((ad) => (
+        <div
+          key={ad.id}
+          className="rounded-xl p-3 border border-white/10 shadow-[0_10px_25px_-12px_rgba(0,0,0,0.7)] bg-neutral-950/50 backdrop-blur-sm hover:border-white/20 transition-colors"
+        >
+          <div className="flex items-start gap-3 mb-3">
+            <div className="p-3 rounded-2xl shadow-inner bg-gradient-to-tr from-neutral-800 via-neutral-700 to-neutral-600 ring-1 ring-white/10 flex items-center justify-center">
+              <svg className="w-7 h-7 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" />
+              </svg>
             </div>
-
-            <div className="flex justify-between text-[13px] text-neutral-400 font-medium mb-4">
-              <span className="tabular-nums">
-                {ad.watched} / {ad.dailyLimit} watched
-              </span>
-              <span className="text-neutral-300 tabular-nums">+{walletConfig.currencySymbol}{ad.reward}</span>
-            </div>
-
-            <div className="flex justify-center">
-              <button
-                className="w-11/12 py-2 rounded-xl text-sm font-semibold shadow-xl transition-all duration-300 transform ring-1 ring-black/10 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-b from-white to-neutral-200 text-neutral-900 hover:from-white hover:to-white"
-                onClick={() => showAd(ad.id)}
-                disabled={isAdDisabled(ad) || isWatchingAd === ad.id}
-              >
-                {isWatchingAd === ad.id ? 'Watching Ad…' : getButtonText(ad)}
-              </button>
+            <div className="min-w-0">
+              <h3 className="font-semibold text-white text-base leading-tight truncate">
+                {ad.title}
+              </h3>
+              <p className="text-[12px] text-neutral-400 mt-1 line-clamp-2">
+                {ad.description}
+              </p>
             </div>
           </div>
-        ))}
-      </div>
+
+          <div className="w-full bg-neutral-800/40 rounded-full h-3 mb-3 overflow-hidden ring-1 ring-white/10">
+            <div
+              className="h-3 rounded-full transition-all duration-500 bg-gradient-to-r from-neutral-300 to-neutral-500 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.5)]"
+              style={{ width: `${Math.min((ad.watched / ad.dailyLimit) * 100, 100)}%` }}
+            />
+          </div>
+
+          <div className="flex justify-between text-[13px] text-neutral-400 font-medium mb-4">
+            <span className="tabular-nums">
+              {ad.watched} / {ad.dailyLimit} watched
+            </span>
+            <span className="text-neutral-300 tabular-nums">wait: {ad.waitTime}s</span>
+          </div>
+
+          <div className="flex justify-center">
+            <button
+              className="w-11/12 py-2 rounded-xl text-sm font-semibold shadow-xl transition-all duration-300 transform ring-1 ring-black/10 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-b from-white to-neutral-200 text-neutral-900 hover:from-white hover:to-white"
+              onClick={() => showAd(ad.id)}
+              disabled={isAdDisabled(ad) || isWatchingAd === ad.id}
+            >
+              {isWatchingAd === ad.id ? 'Watching Ad…' : getButtonText(ad)}
+            </button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 };
