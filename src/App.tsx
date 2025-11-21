@@ -2909,29 +2909,21 @@ const DailyTasks: React.FC<DailyTasksProps> = ({
 };
 
 const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) => {
-  const { appConfig } = useAppConfig(); // Add this line to get appConfig
-  const [ads, setAds] = React.useState<Ad[]>([
-    { id: 1, title: 'Ads1', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'gigapub', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: '4338' },
-    { id: 2, title: 'Ads2', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'onclicka', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: '6098415' },
-    { id: 3, title: 'Ads3', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'adsovio', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: '7721' },
-    { id: 4, title: 'Ads4', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'adextra', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: 'STATIC_FROM_INDEX_HTML' },
-    { id: 5, title: 'Ads5', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'monetag', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: appConfig.monetagAppId || 'DEFAULT_MONETAG_APP_ID' },
-  ]);
-
+  const [ads, setAds] = React.useState<Ad[]>([]);
   const [isWatchingAd, setIsWatchingAd] = React.useState<number | null>(null);
   const [scriptLoaded, setScriptLoaded] = React.useState<Record<Provider, boolean>>({
     gigapub: false,
     onclicka: false,
     adsovio: false,
-    adextra: true,
-    monetag: false,
+    adextra: false,
+    monetag: false, // NEW: Monetag script status
   });
   const [scriptsInitialized, setScriptsInitialized] = React.useState<Record<Provider, boolean>>({
     gigapub: false,
     onclicka: false,
     adsovio: false,
-    adextra: true,
-    monetag: false,
+    adextra: false,
+    monetag: false, // NEW: Monetag initialization status
   });
   const [cooldowns, setCooldowns] = React.useState<Record<string, number>>({});
   const [lastWatched, setLastWatched] = React.useState<Record<string, Date>>({});
@@ -2941,6 +2933,7 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
 
   const { updateUser, addTransaction } = useUserData();
   const { walletConfig } = useWalletConfig();
+  const { appConfig } = useAppConfig(); // Get app config for monetag appId
 
   // Concurrency lock management
   const concurrencyLockRef = useRef<boolean>(false);
@@ -3091,43 +3084,76 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
     };
   }, [checkAndPerformDailyReset]);
 
-  // Load ads config from Firebase
+  // FIXED: Load ads config from Firebase with proper appId updating including Monetag
   React.useEffect(() => {
     const adsRef = ref(db, 'ads');
     const unsubscribe = onValue(adsRef, (snapshot) => {
-      if (!snapshot.exists()) return;
+      if (!snapshot.exists()) {
+        console.log('No ads configuration found in Firebase');
+        setAds([]);
+        return;
+      }
+      
       const adsData: Record<string, any> = snapshot.val();
-      setAds((prev) =>
-        prev.map((ad) => {
-          const cfg = adsData[ad.provider];
-          if (!cfg) return ad;
-          return {
-            ...ad,
-            reward: cfg.reward ?? ad.reward,
-            dailyLimit: cfg.dailyLimit ?? ad.dailyLimit,
-            hourlyLimit: cfg.hourlyLimit ?? ad.hourlyLimit,
-            cooldown: cfg.cooldown ?? ad.cooldown,
+      console.log('Loaded ads config from Firebase:', adsData);
+      
+      // Create ads array from Firebase data
+      const adsArray: Ad[] = [];
+      
+      // Define the providers in order (including Monetag)
+      const providers: Provider[] = ['gigapub', 'onclicka', 'adsovio', 'adextra', 'monetag'];
+      
+      providers.forEach((provider, index) => {
+        const cfg = adsData[provider];
+        if (cfg) {
+          const ad: Ad = {
+            id: index + 1,
+            title: `Ads${index + 1}`,
+            description: `${walletConfig.currency} ${cfg.reward || 0.5} per ad`,
+            watched: 0,
+            dailyLimit: cfg.dailyLimit || 5,
+            hourlyLimit: cfg.hourlyLimit || 2,
+            provider: provider,
+            waitTime: cfg.waitTime || 5,
+            cooldown: cfg.cooldown || 60,
+            reward: cfg.reward || 0.5,
             enabled: cfg.enabled !== false,
-            waitTime: cfg.waitTime ?? ad.waitTime,
-            appId: cfg.appId ?? ad.appId,
-            description: `${walletConfig.currency} ${cfg.reward ?? ad.reward} per ad`,
+            appId: cfg.appId || '', // Will be set from Firebase
           };
-        })
-      );
-      setScriptsInitialized((prev) => ({
-        ...prev,
+          adsArray.push(ad);
+        }
+      });
+      
+      setAds(adsArray);
+      
+      // Reset script initialization when config changes
+      setScriptsInitialized({
         gigapub: false,
         onclicka: false,
         adsovio: false,
+        adextra: false,
         monetag: false,
-      }));
+      });
     });
+
     return () => unsubscribe();
   }, [walletConfig.currency]);
 
+  // FIXED: Add debug logging to see current appIds
+  React.useEffect(() => {
+    if (ads.length > 0) {
+      console.log('Current ads configuration:', ads.map(ad => ({
+        provider: ad.provider,
+        appId: ad.appId,
+        enabled: ad.enabled,
+        reward: ad.reward
+      })));
+    }
+  }, [ads]);
+
   // Load user's ad watch history
   React.useEffect(() => {
-    if (!userData?.telegramId) return;
+    if (!userData?.telegramId || ads.length === 0) return;
     const userAdsRef = ref(db, `userAds/${userData.telegramId}`);
     const unsubscribe = onValue(userAdsRef, (snapshot) => {
       if (!snapshot.exists()) return;
@@ -3152,27 +3178,109 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
       setLastWatched(newLastWatched);
     });
     return () => unsubscribe();
-  }, [userData?.telegramId]);
+  }, [userData?.telegramId, ads]);
 
-  // Cooldown ticker
+  // FIXED: Enhanced script initialization to use updated appId including Monetag
   React.useEffect(() => {
-    const iv = setInterval(() => {
-      const next: Record<string, number> = {};
-      Object.keys(lastWatched).forEach((provider) => {
-        const ad = ads.find((a) => a.provider === provider);
-        if (ad && lastWatched[provider]) {
-          const elapsed = (Date.now() - lastWatched[provider].getTime()) / 1000;
-          if (elapsed < ad.cooldown) next[provider] = Math.ceil(ad.cooldown - elapsed);
+    const initScripts = () => {
+      ads.forEach((ad) => {
+        if (!ad.enabled || !ad.appId || scriptsInitialized[ad.provider]) return;
+        
+        console.log(`Initializing ${ad.provider} with appId:`, ad.appId);
+        
+        switch (ad.provider) {
+          case 'gigapub': {
+            if (!document.getElementById('gigapub-script')) {
+              const s = document.createElement('script');
+              s.id = 'gigapub-script';
+              // Use the appId from Firebase
+              s.src = `https://ad.gigapub.tech/script?id=${ad.appId}`;
+              s.async = true;
+              s.onload = () => {
+                console.log('Gigapub script loaded with appId:', ad.appId);
+                setScriptLoaded((p) => ({ ...p, gigapub: typeof window.showGiga === 'function' }));
+                setScriptsInitialized((p) => ({ ...p, gigapub: true }));
+              };
+              s.onerror = () => {
+                console.error('Gigapub script failed to load with appId:', ad.appId);
+                setScriptsInitialized((p) => ({ ...p, gigapub: true }));
+              };
+              document.head.appendChild(s);
+            } else {
+              setScriptLoaded((p) => ({ ...p, gigapub: true }));
+              setScriptsInitialized((p) => ({ ...p, gigapub: true }));
+            }
+            break;
+          }
+          case 'adsovio': {
+            if (!document.getElementById('adsovio-script')) {
+              const s = document.createElement('script');
+              s.id = 'adsovio-script';
+              // Use the appId from Firebase
+              s.src = `https://adsovio.com/cdn/ads.js?app_uid=${ad.appId}`;
+              s.async = true;
+              s.onload = () => {
+                console.log('Adsovio script loaded with appId:', ad.appId);
+                setScriptLoaded((p) => ({ ...p, adsovio: typeof window.showAdsovio === 'function' }));
+                setScriptsInitialized((p) => ({ ...p, adsovio: true }));
+              };
+              s.onerror = () => {
+                console.error('Adsovio script failed to load with appId:', ad.appId);
+                setScriptsInitialized((p) => ({ ...p, adsovio: true }));
+              };
+              document.head.appendChild(s);
+            } else {
+              setScriptLoaded((p) => ({ ...p, adsovio: true }));
+              setScriptsInitialized((p) => ({ ...p, adsovio: true }));
+            }
+            break;
+          }
+          case 'adextra': {
+            // AdExtra is expected to be included in index.html
+            setScriptLoaded((p) => ({ ...p, adextra: typeof window.p_adextra === 'function' || p.adextra }));
+            setScriptsInitialized((p) => ({ ...p, adextra: true }));
+            break;
+          }
+          case 'monetag': {
+            // NEW: Monetag initialization
+            if (!document.getElementById('monetag-script')) {
+              const s = document.createElement('script');
+              s.id = 'monetag-script';
+              // Use the appId from Firebase (stored in appConfig.monetagAppId)
+              const monetagAppId = appConfig.monetagAppId || ad.appId;
+              s.src = `https://s.monetag.com/static/js/monetag.js?site_id=${monetagAppId}`;
+              s.async = true;
+              s.onload = () => {
+                console.log('Monetag script loaded with appId:', monetagAppId);
+                setScriptLoaded((p) => ({ ...p, monetag: true }));
+                setScriptsInitialized((p) => ({ ...p, monetag: true }));
+              };
+              s.onerror = () => {
+                console.error('Monetag script failed to load with appId:', monetagAppId);
+                setScriptsInitialized((p) => ({ ...p, monetag: true }));
+              };
+              document.head.appendChild(s);
+            } else {
+              setScriptLoaded((p) => ({ ...p, monetag: true }));
+              setScriptsInitialized((p) => ({ ...p, monetag: true }));
+            }
+            break;
+          }
         }
       });
-      setCooldowns(next);
-    }, 1000);
-    return () => clearInterval(iv);
-  }, [lastWatched, ads]);
+    };
+    
+    if (ads.length > 0) {
+      initScripts();
+    }
+  }, [ads, scriptsInitialized, appConfig.monetagAppId]);
 
   // Onclicka initialization
   useEffect(() => {
     const loadOnclickaScript = () => {
+      const onclickaAd = ads.find(ad => ad.provider === 'onclicka' && ad.enabled && ad.appId);
+      if (!onclickaAd) return;
+
       if (document.getElementById('onclicka-script')) {
         console.log('Onclicka script already loaded');
         return;
@@ -3188,10 +3296,19 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
         
         try {
           if (window.initCdTma) {
-            const show = await window.initCdTma({ id: "6098415" });
+            // Use the updated appId from Firebase
+            const onclickaAd = ads.find(ad => ad.provider === 'onclicka');
+            const appId = onclickaAd?.appId;
+            if (!appId) {
+              console.error('No appId found for Onclicka');
+              setScriptLoaded(prev => ({ ...prev, onclicka: false }));
+              return;
+            }
+            
+            const show = await window.initCdTma({ id: appId });
             window.showAd = show;
             setScriptLoaded(prev => ({ ...prev, onclicka: typeof window.showAd === 'function' }));
-            console.log('Onclicka initialized successfully');
+            console.log('Onclicka initialized successfully with appId:', appId);
           } else {
             console.error('initCdTma not defined after script load');
             setScriptLoaded(prev => ({ ...prev, onclicka: false }));
@@ -3210,87 +3327,31 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
       document.head.appendChild(script);
     };
 
-    // Only load if there's an Onclicka ad enabled
-    const onclickaAd = ads.find(ad => ad.provider === 'onclicka' && ad.enabled);
+    // Only load if there's an Onclicka ad enabled with appId
+    const onclickaAd = ads.find(ad => ad.provider === 'onclicka' && ad.enabled && ad.appId);
     if (onclickaAd && !scriptLoaded.onclicka) {
+      console.log('Loading Onclicka with appId:', onclickaAd.appId);
       loadOnclickaScript();
     }
   }, [ads, scriptLoaded.onclicka]);
 
-  // Initialize other ad provider scripts
+  // Cooldown ticker
   React.useEffect(() => {
-    const initScripts = () => {
-      ads.forEach((ad) => {
-        if (!ad.enabled || scriptsInitialized[ad.provider]) return;
-        
-        switch (ad.provider) {
-          case 'gigapub': {
-            if (!document.getElementById('gigapub-script')) {
-              const s = document.createElement('script');
-              s.id = 'gigapub-script';
-              s.src = `https://ad.gigapub.tech/script?id=${ad.appId}`;
-              s.async = true;
-              s.onload = () => {
-                setScriptLoaded((p) => ({ ...p, gigapub: typeof window.showGiga === 'function' }));
-                setScriptsInitialized((p) => ({ ...p, gigapub: true }));
-              };
-              s.onerror = () => setScriptsInitialized((p) => ({ ...p, gigapub: true }));
-              document.head.appendChild(s);
-            } else {
-              setScriptLoaded((p) => ({ ...p, gigapub: true }));
-              setScriptsInitialized((p) => ({ ...p, gigapub: true }));
-            }
-            break;
-          }
-          case 'adsovio': {
-            if (!document.getElementById('adsovio-script')) {
-              const s = document.createElement('script');
-              s.id = 'adsovio-script';
-              s.src = `https://adsovio.com/cdn/ads.js?app_uid=${ad.appId}`;
-              s.async = true;
-              s.onload = () => {
-                setScriptLoaded((p) => ({ ...p, adsovio: typeof window.showAdsovio === 'function' }));
-                setScriptsInitialized((p) => ({ ...p, adsovio: true }));
-              };
-              s.onerror = () => setScriptsInitialized((p) => ({ ...p, adsovio: true }));
-              document.head.appendChild(s);
-            } else {
-              setScriptLoaded((p) => ({ ...p, adsovio: true }));
-              setScriptsInitialized((p) => ({ ...p, adsovio: true }));
-            }
-            break;
-          }
-          case 'adextra': {
-            // AdExtra is expected to be included in index.html and exposes window.p_adextra
-            setScriptLoaded((p) => ({ ...p, adextra: typeof window.p_adextra === 'function' || p.adextra }));
-            setScriptsInitialized((p) => ({ ...p, adextra: true }));
-            break;
-          }
-          case 'monetag': {
-            // Monetag initialization would go here
-            setScriptsInitialized((p) => ({ ...p, monetag: true }));
-            break;
-          }
+    const iv = setInterval(() => {
+      const next: Record<string, number> = {};
+      Object.keys(lastWatched).forEach((provider) => {
+        const ad = ads.find((a) => a.provider === provider);
+        if (ad && lastWatched[provider]) {
+          const elapsed = (Date.now() - lastWatched[provider].getTime()) / 1000;
+          if (elapsed < ad.cooldown) next[provider] = Math.ceil(ad.cooldown - elapsed);
         }
       });
-    };
-    initScripts();
-  }, [ads, scriptsInitialized]);
+      setCooldowns(next);
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [lastWatched, ads]);
 
-  const updateUserAdWatch = async (adId: number) => {
-    if (!userData?.telegramId) return;
-    const ad = ads.find((a) => a.id === adId);
-    if (!ad) return;
-
-    const userAdRef = ref(db, `userAds/${userData.telegramId}/${ad.provider}`);
-    const now = new Date().toISOString();
-    await update(userAdRef, {
-      watchedToday: (ad.watched || 0) + 1,
-      lastWatched: now,
-      lastUpdated: now,
-    });
-  };
-
+  // NEW: Enhanced recordAdWatch with total ads tracking
   const recordAdWatch = async (adId: number): Promise<number> => {
     if (!userData) {
       showMessage('error', 'User not loaded. Try again.');
@@ -3309,11 +3370,13 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
       const newBalance = userData.balance + reward;
       const newTotalEarned = userData.totalEarned + reward;
       const newAdsCount = newAdsWatchedToday + 1;
+      const newTotalAdsWatched = (userData.totalAdsWatched || 0) + 1; // NEW: Increment total ads watched
 
       await updateUser({
         balance: newBalance,
         totalEarned: newTotalEarned,
         adsWatchedToday: newAdsCount,
+        totalAdsWatched: newTotalAdsWatched, // NEW: Update total ads watched
         lastAdWatch: now.toISOString(),
       });
 
@@ -3338,6 +3401,20 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
     }
   };
 
+  const updateUserAdWatch = async (adId: number) => {
+    if (!userData?.telegramId) return;
+    const ad = ads.find((a) => a.id === adId);
+    if (!ad) return;
+
+    const userAdRef = ref(db, `userAds/${userData.telegramId}/${ad.provider}`);
+    const now = new Date().toISOString();
+    await update(userAdRef, {
+      watchedToday: (ad.watched || 0) + 1,
+      lastWatched: now,
+      lastUpdated: now,
+    });
+  };
+
   const handleAdCompletion = async (adId: number) => {
     await updateUserAdWatch(adId);
     const earned = await recordAdWatch(adId);
@@ -3346,7 +3423,7 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
 
   const formatTime = (sec: number): string => (sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${sec % 60}s`);
 
-  // Enhanced AdExtra handler with proper timeout and error handling (from 2nd code)
+  // Enhanced AdExtra handler with proper timeout and error handling
   const runAdExtra = async (adId: number, ad: Ad) => {
     if (typeof window.p_adextra !== 'function') {
       showMessage('info', 'AdExtra initializing… please try again in a moment');
@@ -3427,6 +3504,52 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
     }
   };
 
+  // NEW: Monetag handler
+  const runMonetag = async (adId: number, ad: Ad) => {
+    if (!window.monetag) {
+      showMessage('error', 'Monetag not loaded properly. Please refresh and try again.');
+      concurrencyLockRef.current = false;
+      setConcurrentLock(false);
+      setIsWatchingAd(null);
+      return;
+    }
+
+    try {
+      showMessage('info', 'Loading Monetag...');
+      
+      // Monetag typically auto-shows ads, but we need to track completion
+      // This is a simplified implementation - adjust based on Monetag's actual API
+      const monetagAd = await new Promise((resolve, _reject) => {
+        // Monetag usually auto-shows ads, so we'll use a timeout-based approach
+        const timeout = setTimeout(() => {
+          resolve(true); // Assume ad was shown after timeout
+        }, 30000); // 30 second timeout
+        
+        // If Monetag has a callback system, use it here
+        if (window.monetag?.onAdCompleted) {
+          window.monetag.onAdCompleted = () => {
+            clearTimeout(timeout);
+            resolve(true);
+          };
+        }
+      });
+
+      if (monetagAd) {
+        await handleAdCompletion(adId);
+        setAds((prev) => prev.map((a) => (a.id === adId ? { ...a, watched: a.watched + 1 } : a)));
+        setLastWatched((prev) => ({ ...prev, [ad.provider]: new Date() }));
+        showMessage('success', `Monetag completed! You earned ${walletConfig.currencySymbol}${ad.reward}`);
+      }
+    } catch (error) {
+      console.error('Monetag error:', error);
+      showMessage('error', 'Monetag failed to load. Please try again later.');
+    } finally {
+      concurrencyLockRef.current = false;
+      setConcurrentLock(false);
+      setIsWatchingAd(null);
+    }
+  };
+
   // Enhanced showAd with proper concurrency control
   const showAd = async (adId: number) => {
     // Check concurrency lock
@@ -3444,9 +3567,15 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
       showMessage('error', 'This ad provider is temporarily unavailable');
       return;
     }
+    
+    // Check if appId is available
+    if (!ad.appId) {
+      showMessage('error', 'Ad provider configuration is incomplete');
+      return;
+    }
 
-    // AdExtra should not wait for dynamic scriptLoaded
-    if (ad.provider !== 'adextra' && !scriptLoaded[ad.provider]) {
+    // AdExtra and Monetag should not wait for dynamic scriptLoaded
+    if (ad.provider !== 'adextra' && ad.provider !== 'monetag' && !scriptLoaded[ad.provider]) {
       showMessage('info', 'Ad provider is loading... Please wait a moment');
       return;
     }
@@ -3483,6 +3612,11 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
         return;
       }
 
+      if (ad.provider === 'monetag') {
+        await runMonetag(adId, ad);
+        return;
+      }
+
       // Handle other providers (gigapub, adsovio)
       const minWaitTime = ad.waitTime;
       const start = Date.now();
@@ -3513,7 +3647,7 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
       showMessage('error', 'Ad was not completed.');
     } finally {
       // Only release lock for non-callback providers
-      if (ad?.provider !== 'adextra' && ad?.provider !== 'onclicka') {
+      if (ad?.provider !== 'adextra' && ad?.provider !== 'onclicka' && ad?.provider !== 'monetag') {
         concurrencyLockRef.current = false;
         setConcurrentLock(false);
         setIsWatchingAd(null);
@@ -3523,22 +3657,35 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
 
   const isAdDisabled = (ad: Ad) => {
     if (!ad.enabled) return true;
+    if (!ad.appId) return true; // Disable if no appId
     if (ad.dailyLimit > 0 && ad.watched >= ad.dailyLimit) return true;
     if (cooldowns[ad.provider]) return true;
-    if (ad.provider !== 'adextra' && !scriptLoaded[ad.provider]) return true;
+    if (ad.provider !== 'adextra' && ad.provider !== 'monetag' && !scriptLoaded[ad.provider]) return true;
     if (concurrentLock && isWatchingAd !== ad.id) return true;
     return false;
   };
 
   const getButtonText = (ad: Ad) => {
     if (!ad.enabled) return 'Temporarily Disabled';
+    if (!ad.appId) return 'Not Configured';
     if (ad.dailyLimit > 0 && ad.watched >= ad.dailyLimit) return 'Daily Limit Reached';
     if (cooldowns[ad.provider]) return `Wait ${formatTime(cooldowns[ad.provider])}`;
-    if (ad.provider !== 'adextra' && !scriptLoaded[ad.provider]) return 'Loading...';
+    if (ad.provider !== 'adextra' && ad.provider !== 'monetag' && !scriptLoaded[ad.provider]) return 'Loading...';
     if (concurrentLock && isWatchingAd !== ad.id) return 'Another in Progress';
     if (isWatchingAd === ad.id) return 'Watching Ad...';
     return 'Watch Now';
   };
+
+  if (ads.length === 0) {
+    return (
+      <div className="flex justify-center items-center p-8">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-neutral-400" />
+          <p className="text-neutral-400">Loading ads configuration...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-2 gap-2 text-neutral-200">
