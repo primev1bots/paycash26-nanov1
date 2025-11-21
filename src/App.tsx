@@ -2908,13 +2908,14 @@ const DailyTasks: React.FC<DailyTasksProps> = ({
   );
 };
 
-// Enhanced AdsDashboard Component with Complete Ads Tracking
 const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) => {
+  const { appConfig } = useAppConfig(); // Add this line to get appConfig
   const [ads, setAds] = React.useState<Ad[]>([
     { id: 1, title: 'Ads1', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'gigapub', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: '4338' },
     { id: 2, title: 'Ads2', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'onclicka', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: '6098415' },
     { id: 3, title: 'Ads3', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'adsovio', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: '7721' },
     { id: 4, title: 'Ads4', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'adextra', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: 'STATIC_FROM_INDEX_HTML' },
+    { id: 5, title: 'Ads5', description: '', watched: 0, dailyLimit: 5, hourlyLimit: 2, provider: 'monetag', waitTime: 5, cooldown: 60, reward: 0.5, enabled: true, appId: appConfig.monetagAppId || 'DEFAULT_MONETAG_APP_ID' },
   ]);
 
   const [isWatchingAd, setIsWatchingAd] = React.useState<number | null>(null);
@@ -2922,13 +2923,15 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
     gigapub: false,
     onclicka: false,
     adsovio: false,
-    adextra: true, // AdExtra comes from index.html
+    adextra: true,
+    monetag: false,
   });
   const [scriptsInitialized, setScriptsInitialized] = React.useState<Record<Provider, boolean>>({
     gigapub: false,
     onclicka: false,
     adsovio: false,
     adextra: true,
+    monetag: false,
   });
   const [cooldowns, setCooldowns] = React.useState<Record<string, number>>({});
   const [lastWatched, setLastWatched] = React.useState<Record<string, Date>>({});
@@ -3116,6 +3119,7 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
         gigapub: false,
         onclicka: false,
         adsovio: false,
+        monetag: false,
       }));
     });
     return () => unsubscribe();
@@ -3260,6 +3264,11 @@ const AdsDashboard: React.FC<{ userData?: UserData | null }> = ({ userData }) =>
             // AdExtra is expected to be included in index.html and exposes window.p_adextra
             setScriptLoaded((p) => ({ ...p, adextra: typeof window.p_adextra === 'function' || p.adextra }));
             setScriptsInitialized((p) => ({ ...p, adextra: true }));
+            break;
+          }
+          case 'monetag': {
+            // Monetag initialization would go here
+            setScriptsInitialized((p) => ({ ...p, monetag: true }));
             break;
           }
         }
